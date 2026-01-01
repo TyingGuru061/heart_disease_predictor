@@ -1,17 +1,36 @@
 import streamlit as st
 import pandas as pd
+import numpy as np
 import joblib
 import sqlite3
 
-# -------------------------------------------------
-# Load Model & Columns (Loaded ONCE)
-# -------------------------------------------------
+from sklearn.metrics import confusion_matrix
+
+# =================================================
+# PAGE CONFIG
+# =================================================
+st.set_page_config(
+    page_title="Heart Disease Risk Predictor",
+    page_icon="❤️",
+    layout="wide"
+)
+
+# =================================================
+# LOAD MODEL & FILES (ONCE)
+# =================================================
 model = joblib.load("heart_model.pkl")
 model_columns = joblib.load("model_columns.pkl")
 
-# -------------------------------------------------
-# Database Functions (SQLite)
-# -------------------------------------------------
+# Optional evaluation files
+try:
+    X_test = joblib.load("X_test.pkl")
+    y_test = joblib.load("y_test.pkl")
+except:
+    X_test, y_test = None, None
+
+# =================================================
+# DATABASE FUNCTIONS
+# =================================================
 def init_db():
     conn = sqlite3.connect("heart_logs.db")
     c = conn.cursor()
@@ -32,7 +51,6 @@ def init_db():
     """)
     conn.commit()
     conn.close()
-
 
 def log_prediction(data, score):
     conn = sqlite3.connect("heart_logs.db")
@@ -55,40 +73,42 @@ def log_prediction(data, score):
     conn.commit()
     conn.close()
 
-
-# Initialize database ONCE
 init_db()
 
-# -------------------------------------------------
-# Streamlit UI
-# -------------------------------------------------
-st.set_page_config(page_title="Heart Disease Predictor", page_icon="❤️")
-
+# =================================================
+# HEADER
+# =================================================
 st.title("❤️ Heart Disease Risk Prediction System")
-st.warning("⚠ This tool is for educational purposes only, not for medical diagnosis.")
+st.warning("⚠ Educational use only. Not a medical diagnosis.")
 
-st.subheader("Enter Patient Details")
+# =================================================
+# INPUT SECTION
+# =================================================
+st.subheader("🧑 Patient Information")
 
-# Input Fields
-age = st.number_input("Age", min_value=1, max_value=120, value=50)
-sex = st.selectbox("Sex", ["M", "F"])
-chest_pain = st.selectbox("Chest Pain Type", ["ATA", "NAP", "ASY", "TA"])
-resting_bp = st.number_input("Resting Blood Pressure", value=120)
-cholesterol = st.number_input("Cholesterol", value=200)
-fasting_bs = st.selectbox("Fasting Blood Sugar > 120 mg/dl", [0, 1])
-max_hr = st.number_input("Max Heart Rate", value=150)
-exercise_angina = st.selectbox("Exercise Angina", ["N", "Y"])
-oldpeak = st.number_input("Oldpeak", step=0.1, value=0.0)
-st_slope = st.selectbox("ST Slope", ["Up", "Flat", "Down"])
+col1, col2 = st.columns(2)
 
-# -------------------------------------------------
-# Prediction Button
-# -------------------------------------------------
-if st.button("Predict Risk"):
-    # Create empty dataframe with correct columns
+with col1:
+    age = st.number_input("Age", 1, 120, 50)
+    sex = st.selectbox("Sex", ["M", "F"])
+    chest_pain = st.selectbox("Chest Pain Type", ["ATA", "NAP", "ASY", "TA"])
+    resting_bp = st.number_input("Resting Blood Pressure", value=120)
+    cholesterol = st.number_input("Cholesterol", value=200)
+
+with col2:
+    fasting_bs = st.selectbox("Fasting Blood Sugar > 120 mg/dl", [0, 1])
+    max_hr = st.number_input("Max Heart Rate", value=150)
+    exercise_angina = st.selectbox("Exercise Angina", ["N", "Y"])
+    oldpeak = st.number_input("Oldpeak", step=0.1, value=0.0)
+    st_slope = st.selectbox("ST Slope", ["Up", "Flat", "Down"])
+
+# =================================================
+# PREDICTION
+# =================================================
+if st.button("🔍 Predict Risk"):
+
     input_df = pd.DataFrame(0, index=[0], columns=model_columns)
 
-    # Fill numerical values
     input_df["Age"] = age
     input_df["RestingBP"] = resting_bp
     input_df["Cholesterol"] = cholesterol
@@ -96,7 +116,6 @@ if st.button("Predict Risk"):
     input_df["MaxHR"] = max_hr
     input_df["Oldpeak"] = oldpeak
 
-    # Handle categorical features
     if f"Sex_{sex}" in input_df.columns:
         input_df[f"Sex_{sex}"] = 1
 
@@ -109,18 +128,14 @@ if st.button("Predict Risk"):
     if f"ST_Slope_{st_slope}" in input_df.columns:
         input_df[f"ST_Slope_{st_slope}"] = 1
 
-    # Predict probability
     probability = model.predict_proba(input_df)[0][1]
-
-    # Medical threshold
     threshold = 0.35
 
     if probability >= threshold:
-        st.error(f"⚠ HIGH RISK of Heart Disease\n\nRisk Probability: {probability:.2%}")
+        st.error(f"⚠ HIGH RISK\nRisk Probability: {probability:.2%}")
     else:
-        st.success(f"✅ LOW RISK of Heart Disease\n\nRisk Probability: {probability:.2%}")
+        st.success(f"✅ LOW RISK\nRisk Probability: {probability:.2%}")
 
-    # Log prediction to database
     patient_data = {
         "Age": age,
         "Sex": sex,
@@ -136,13 +151,63 @@ if st.button("Predict Risk"):
 
     log_prediction(patient_data, probability)
 
-# -------------------------------------------------
-# Show Prediction History (Optional)
-# -------------------------------------------------
+# =================================================
+# CONSULTANT DASHBOARD
+# =================================================
 st.divider()
+st.header("📊 Consultant’s View (Analytics Dashboard)")
 
-if st.checkbox("Show Prediction History"):
-    conn = sqlite3.connect("heart_logs.db")
-    df = pd.read_sql("SELECT * FROM predictions", conn)
-    conn.close()
-    st.dataframe(df)
+conn = sqlite3.connect("heart_logs.db")
+df = pd.read_sql("SELECT * FROM predictions", conn)
+conn.close()
+
+# ---------------- SQL ANALYSIS ----------------
+st.subheader("📌 SQL Deep Analysis")
+
+if not df.empty:
+    avg_risk = df["risk_score"].mean()
+    high_risk_count = (df["risk_score"] >= 0.35).sum()
+
+    col1, col2 = st.columns(2)
+    col1.metric("Average Risk Score", f"{avg_risk:.2%}")
+    col2.metric("Total High Risk Cases", high_risk_count)
+
+    st.subheader("🕒 5 Most Recent Predictions")
+    st.dataframe(df.tail(5))
+
+else:
+    st.info("No records available.")
+
+# ---------------- EDA ----------------
+st.subheader("📈 Risk Distribution (EDA)")
+
+if not df.empty:
+    st.bar_chart(df["risk_score"])
+
+# ---------------- FEATURE IMPORTANCE ----------------
+st.subheader("🧬 Feature Importance (Why the Model Predicts This)")
+
+if hasattr(model, "feature_importances_"):
+    importance_df = pd.DataFrame({
+        "Feature": model_columns,
+        "Importance": model.feature_importances_
+    }).sort_values(by="Importance", ascending=True)
+
+    st.bar_chart(importance_df.set_index("Feature"))
+
+# ---------------- CONFUSION MATRIX ----------------
+st.subheader("🧪 Model Evaluation – Confusion Matrix")
+
+if X_test is not None and y_test is not None:
+    y_pred = model.predict(X_test)
+    cm = confusion_matrix(y_test, y_pred)
+
+    cm_df = pd.DataFrame(
+        cm,
+        index=["Actual No Disease", "Actual Disease"],
+        columns=["Predicted No Disease", "Predicted Disease"]
+    )
+
+    st.dataframe(cm_df)
+else:
+    st.warning("Confusion matrix files not found.")
